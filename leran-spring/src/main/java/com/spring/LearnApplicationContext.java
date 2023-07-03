@@ -1,6 +1,7 @@
 package com.spring;
 
 import java.io.File;
+import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
 import java.util.Map;
@@ -23,7 +24,8 @@ public class LearnApplicationContext {
             String beanName = entry.getKey();
             BeanDefinition beanDefinition = entry.getValue();
             if (beanDefinition.getScope().equals("singleton")){
-                Object bean = createBean(beanDefinition);//单例bean
+
+                Object bean = createBean(beanName, beanDefinition);//单例bean
 
                 singletonObjects.put(beanName, bean);
             }
@@ -33,13 +35,28 @@ public class LearnApplicationContext {
     }
 
     //创建bean
-    public Object createBean(BeanDefinition beanDefinition){
+    public Object createBean(String beanName, BeanDefinition beanDefinition){
 
         Class clazz = beanDefinition.getClazz();
 
         try {
             //通过反射获取创建bean对象
             Object instance = clazz.getDeclaredConstructor().newInstance();
+
+            // 依赖注入
+            for (Field declaredField : clazz.getDeclaredFields()) {
+                if (declaredField.isAnnotationPresent(Autowired.class)){
+                    //根据名字找bean
+                    Object bean = getBean(declaredField.getName());
+                    declaredField.setAccessible(true);
+                    declaredField.set(instance, bean);
+                }
+            }
+
+            if (instance instanceof BeanNameAware){
+                ((BeanNameAware)instance).setBeanName(beanName);
+            }
+
             return instance;
         } catch (InstantiationException e) {
             e.printStackTrace();
@@ -134,7 +151,7 @@ public class LearnApplicationContext {
                 return o;
             } else {
                 //如果当前bean不是单例的就创建一个bean对象
-                Object bean = createBean(beanDefinition);
+                Object bean = createBean(beanName, beanDefinition);
                 return bean;
             }
         } else {
