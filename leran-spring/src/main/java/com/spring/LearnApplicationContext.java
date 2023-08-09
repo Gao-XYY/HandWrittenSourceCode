@@ -4,6 +4,8 @@ import java.io.File;
 import java.lang.reflect.Field;
 import java.lang.reflect.InvocationTargetException;
 import java.net.URL;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -13,6 +15,8 @@ public class LearnApplicationContext {
     private ConcurrentHashMap<String, Object> singletonObjects = new ConcurrentHashMap<>();//用来存放单例bean   单例池
     //存所有bean的定义
     private ConcurrentHashMap<String, BeanDefinition> beanDefinitionMap = new ConcurrentHashMap<>();
+
+    private List<BeanPostProcessor> beanPostProcessorList = new ArrayList<>();
 
     public LearnApplicationContext(Class configClass){
         this.configClass = configClass;
@@ -30,19 +34,14 @@ public class LearnApplicationContext {
                 singletonObjects.put(beanName, bean);
             }
         }
-
-
     }
 
     //创建bean
     public Object createBean(String beanName, BeanDefinition beanDefinition){
-
         Class clazz = beanDefinition.getClazz();
-
         try {
             //通过反射获取创建bean对象
             Object instance = clazz.getDeclaredConstructor().newInstance();
-
             // 依赖注入
             for (Field declaredField : clazz.getDeclaredFields()) {
                 if (declaredField.isAnnotationPresent(Autowired.class)){
@@ -52,11 +51,25 @@ public class LearnApplicationContext {
                     declaredField.set(instance, bean);
                 }
             }
-
+            //Aware回调
             if (instance instanceof BeanNameAware){
                 ((BeanNameAware)instance).setBeanName(beanName);
             }
-
+            for (BeanPostProcessor beanPostProcessor : beanPostProcessorList) {
+                instance = beanPostProcessor.postProcessBeforeInitialization(instance, beanName);
+            }
+            //初始化
+            if (instance instanceof InitializingBean){
+                try {
+                    ((InitializingBean)instance).afterPropertiesSet();
+                } catch (Exception e) {
+                    e.printStackTrace();
+                }
+            }
+            for (BeanPostProcessor beanPostProcessor : beanPostProcessorList) {
+                instance = beanPostProcessor.psotProcessAfterInitialization(instance, beanName);
+            }
+            // BeanPostProcessor
             return instance;
         } catch (InstantiationException e) {
             e.printStackTrace();
@@ -74,7 +87,7 @@ public class LearnApplicationContext {
     //扫描
     private void scan(Class configClass) {
 
-
+        //通过getDeclaredAnnotation拿到想要的注解@ComponentScan
         ComponentScan componentScanAnnotation = (ComponentScan) configClass.getDeclaredAnnotation(ComponentScan.class);
         String path = componentScanAnnotation.value();//扫描路径
         path = path.replace(".", "/");
@@ -84,29 +97,42 @@ public class LearnApplicationContext {
         //Bootstrap ---> jre/lib
         //Ext ---------> jre/ext/lib
         //App ---------> classpath
+        //拿到对应的类加载器
         ClassLoader classLoader = LearnApplicationContext.class.getClassLoader();
 //        URL resource = classLoader.getResource("com/learn/service");
+        //通过类加载器拿到对应的资源()
         URL resource = classLoader.getResource(path);
 
         File file = new File(resource.getFile());
+        //判断是否拿到的是不是一个目录，如果是接着下面的工作
         if (file.isDirectory()){
             File[] files = file.listFiles();
             for(File f : files){
 //                System.out.println(f);
+                //获取目录名字
                 String fileName = f.getAbsolutePath();
+                //判断扫出来的是不是(.class)文件
                 if (fileName.endsWith(".class")){
+                    //截取需要的(从com开始到.class结束)
                     String className = fileName.substring(fileName.indexOf("com"), fileName.indexOf(".class"));
+                    //将\替换成点
                     className = className.replace("\\", ".");
 //                System.out.println(className);
 
                     try {
+                        //加载一个类获得一个class对象
                         Class<?> clazz = classLoader.loadClass(className);
-
+                        //判断找到的路径里面的类上面有没有Component注解
                         if (clazz.isAnnotationPresent(Component.class)){
                             //表示当前这个类是一个bean
                             //解析类 ----> 生成BeanDefinition，         判断当前bean是单例bean，还是prototype的bean
                             //BeanDefinition ==》bean的定义
 
+                            if (BeanPostProcessor.class.isAssignableFrom(clazz)) {
+                                BeanPostProcessor instance = (BeanPostProcessor) clazz.getDeclaredConstructor().newInstance();
+                                beanPostProcessorList.add(instance);
+                            }
+                            //拿出Component注解(为啥要拿这个注解，是为了拿这个注解里面的值也就是bean的名字)
                             Component componentAnnotation = clazz.getDeclaredAnnotation(Component.class);
                             //当前bean对应的名字
                             String beanName = componentAnnotation.value();
@@ -128,7 +154,13 @@ public class LearnApplicationContext {
 
                         }
 
-                    } catch (ClassNotFoundException e) {
+                    } catch (ClassNotFoundException | NoSuchMethodException e) {
+                        e.printStackTrace();
+                    } catch (InvocationTargetException e) {
+                        e.printStackTrace();
+                    } catch (InstantiationException e) {
+                        e.printStackTrace();
+                    } catch (IllegalAccessException e) {
                         e.printStackTrace();
                     }
 

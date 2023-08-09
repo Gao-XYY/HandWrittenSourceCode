@@ -1,5 +1,6 @@
 package com.spring;
 
+//定义bean
 public class BeanDefinition {
     //当前bean的类型
     private Class clazz;
